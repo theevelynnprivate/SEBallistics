@@ -1,0 +1,134 @@
+return {	
+	Debug = false,
+	
+	WallbangExceptions = {
+		BulletproofGlass = 2
+	},
+	
+	MaterialHealths = {
+		["Body"] = 0.75,
+		
+		[Enum.Material.Fabric] = 0.2,
+		[Enum.Material.Water] = 0.2,
+		
+		[Enum.Material.Snow] = 0.35,
+		[Enum.Material.Glass] = 0.35,
+		[Enum.Material.Neon] = 0.35,
+		
+		[Enum.Material.Sand] = 0.5,
+		[Enum.Material.Wood] = 0.5,
+		[Enum.Material.WoodPlanks] = 0.5,
+		
+		[Enum.Material.Mud] = 0.7,
+		[Enum.Material.SmoothPlastic] = 0.7,
+		[Enum.Material.Plastic] = 0.7,
+		
+		[Enum.Material.Grass] = 0.8,
+		[Enum.Material.LeafyGrass] = 0.8,
+		[Enum.Material.Ground] = 0.8,
+		
+		[Enum.Material.Concrete] = 1.1,
+		[Enum.Material.Brick] = 1.1,
+
+		[Enum.Material.Basalt] = 1.3,	
+		
+		[Enum.Material.Metal] = 5,
+		[Enum.Material.Rock] = 5,
+		[Enum.Material.DiamondPlate] = 5,
+		[Enum.Material.CorrodedMetal] = 5,
+	},
+	
+	WallbangHardnesses = {
+		["Default"] = 2,
+
+		[Enum.Material.Foil] = 0.3,
+		[Enum.Material.Fabric] = 0.3,
+		[Enum.Material.Neon] = 0.3,
+		[Enum.Material.Glass] = 0.3,
+		[Enum.Material.Snow] = 0.3,
+
+		[Enum.Material.Grass] = 0.8,
+		[Enum.Material.LeafyGrass] = 0.8,
+
+		[Enum.Material.Plastic] = 2,
+		[Enum.Material.SmoothPlastic] = 2,
+		[Enum.Material.Wood] = 2,
+		[Enum.Material.WoodPlanks] = 2,
+
+		[Enum.Material.Slate] = 4,
+		[Enum.Material.Marble] = 4,
+		[Enum.Material.Granite] = 4,
+		[Enum.Material.Brick] = 4,
+		[Enum.Material.Pebble] = 4,
+		[Enum.Material.Concrete] = 4,
+		[Enum.Material.Cobblestone] = 4,
+		[Enum.Material.Rock] = 4,
+		[Enum.Material.Sandstone] = 4,
+		[Enum.Material.Basalt] = 4,
+		[Enum.Material.Ground] = 4,
+		[Enum.Material.CrackedLava] = 4,
+		[Enum.Material.Asphalt] = 4,
+		[Enum.Material.Pavement] = 4,
+		[Enum.Material.Limestone] = 4,
+
+		[Enum.Material.CorrodedMetal] = 5,
+		[Enum.Material.DiamondPlate] = 5,
+		[Enum.Material.Metal] = 5,
+
+		[Enum.Material.Ice] = 10,
+		[Enum.Material.Glacier] = 10,
+		[Enum.Material.Sand] = 10,
+		[Enum.Material.Water] = 10,
+		[Enum.Material.Mud] = 10,
+		[Enum.Material.Salt] = 10,
+		[Enum.Material.ForceField] = 10
+	},
+	
+	RicochetAngles = {
+		["Default"] = 1,
+
+		[Enum.Material.Ice] = 0,
+		[Enum.Material.Glacier] = 0,
+		[Enum.Material.Sand] = 0,
+		[Enum.Material.Water] = 0,
+		[Enum.Material.Mud] = 0,
+		[Enum.Material.Salt] = 0,
+
+		[Enum.Material.Foil] = 0.3,
+		[Enum.Material.Fabric] = 0.3,
+		[Enum.Material.Neon] = 0.3,
+		[Enum.Material.Glass] = 0.3,
+		[Enum.Material.Snow] = 0.3,
+
+		[Enum.Material.Grass] = 0.8,
+		[Enum.Material.LeafyGrass] = 0.8,
+
+		[Enum.Material.Plastic] = 1,
+		[Enum.Material.SmoothPlastic] = 1,
+		[Enum.Material.Wood] = 1,
+		[Enum.Material.WoodPlanks] = 1,
+
+		[Enum.Material.Concrete] = 1,
+		[Enum.Material.Cobblestone] = 1.5,
+		[Enum.Material.Rock] = 1.5,
+		[Enum.Material.Sandstone] = 1.5,
+		[Enum.Material.Basalt] = 1.5,
+		[Enum.Material.Ground] = 1.5,
+		[Enum.Material.CrackedLava] = 1.5,
+		[Enum.Material.Asphalt] = 1.5,
+		[Enum.Material.Pavement] = 1.5,
+		[Enum.Material.Limestone] = 1.5,
+
+		[Enum.Material.Slate] = 2,
+		[Enum.Material.Marble] = 2,
+		[Enum.Material.Granite] = 2,
+		[Enum.Material.Brick] = 2,
+		[Enum.Material.Pebble] = 2,
+
+		[Enum.Material.CorrodedMetal] = 5,
+		[Enum.Material.DiamondPlate] = 5,
+		[Enum.Material.Metal] = 5,
+
+		[Enum.Material.ForceField] = 60
+	},
+}
