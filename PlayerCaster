@@ -1,0 +1,165 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.SE_Engine.Configurations.Config)
+local FastCast = require(ReplicatedStorage.SE_Engine.Modules.FastCast)
+local Red = require(ReplicatedStorage.SE_Engine.Modules.Red)
+local SE_API = require(ReplicatedStorage.SE_Engine.Modules.SE_API)
+
+local Module = {}
+local ModuleCache = {}
+local CasterCache = {}
+
+function Module:SetupCaster(Tool, Settings, Caliber, ExcludeList)
+	local Weapon = Tool.Name
+	local Module = ModuleCache[Weapon]
+
+    if Module then
+		Module.RaycastParams.FilterDescendantsInstances = ExcludeList
+	else
+		local FastCastParams = RaycastParams.new()
+		FastCastParams.IgnoreWater = true
+		FastCastParams.FilterType = Enum.RaycastFilterType.Exclude
+		FastCastParams.FilterDescendantsInstances = ExcludeList
+
+		Module = FastCast.newBehavior()
+		Module.RaycastParams = FastCastParams
+		Module.MaxDistance = Caliber.Settings.Distance or 3000
+		Module.HighFidelityBehavior = FastCast.HighFidelityBehavior.Default
+		Module.Acceleration = Vector3.new(workspace.GlobalWind.X, workspace.GlobalWind.Y - 0.367 * workspace.Gravity - Caliber.Settings.Drop * workspace.Gravity, workspace.GlobalWind.Z)
+
+		Module.CosmeticBulletProvider = shared.StrikeEngine.ProjectileCaches[Caliber.Designation]
+		Module.CosmeticBulletContainer = workspace.SE_Workspace.Client.Projectiles
+		Module.CanPierceFunction = function(Cast, Raycast, Velocity, Bullet, Direction)
+			local WallbangParams = RaycastParams.new()
+			WallbangParams.FilterDescendantsInstances = {Raycast.Instance}
+			WallbangParams.FilterType = Enum.RaycastFilterType.Include
+
+			local WallbangHardness = Config.WallbangHardnesses[Raycast.Material] or Config.WallbangHardnesses["Default"]
+
+			local BulletMass = Bullet:GetMass()
+			local BulletPenetration = BulletMass * Velocity.Magnitude
+			local CastDist
+
+			if Config.WallbangExceptions[Raycast.Instance.Name] then
+				CastDist = BulletPenetration / Config.WallbangExceptions[Raycast.Instance.Name]
+			else
+				CastDist = BulletPenetration / WallbangHardness
+			end
+
+			local CastDist2 = CastDist * (Velocity.Magnitude / Cast.UserData["MuzzleVelocity"])
+			local WallbangRaycast = workspace:Raycast(Raycast.Position + Direction * CastDist2, -Direction * CastDist2, WallbangParams)
+
+			if WallbangRaycast and CastDist >= (WallbangRaycast.Position - Raycast.Position).Magnitude then			
+				Cast.Caster.CasterData["Wallbang"] = true
+				Cast.UserData["LastHit"] = {
+					["NewVelocity"] = Velocity * 0.65,
+					["NewPosition"] = WallbangRaycast.Position,
+					["HitEffects"] = {
+						[1] = Raycast,
+						[2] = WallbangRaycast
+					}
+				}
+
+				return true
+			end
+
+			if (Config.RicochetAngles[Raycast.Material] or Config.RicochetAngles["Default"]) >= math.deg(math.acos(Direction.Unit:Dot(Raycast.Normal.Unit))) - 90 then
+				Cast.Caster.CasterData["Ricochet"] = true
+				Cast.UserData["LastHit"] = {
+					["NewVelocity"] = Velocity.Unit - (2 * Velocity.Unit:Dot(Raycast.Normal) * Raycast.Normal) * (Velocity.Magnitude * 0.9),
+					["NewPosition"] = Raycast.Position,
+					["HitEffects"] = {
+						[1] = Raycast
+					}
+				}
+
+				return true
+			end
+
+			if not Cast.UserData.Caliber then
+				Cast.UserData.Caliber = Cast.Caster.CasterData.Caliber.Settings.Penetration
+			end
+			
+			if Config.MaterialHealths[Raycast.Material] and Cast.UserData.Caliber - Config.MaterialHealths[Raycast.Material] > 0 then
+				Cast.UserData.Caliber -= Config.MaterialHealths[Raycast.Material]
+
+				return true
+			end
+
+			return false
+		end
+
+		ModuleCache[Weapon] = Module
+	end
+
+	if not CasterCache[Weapon] then
+		local Caster = FastCast.new()
+		Caster.CasterData = {
+			["Tool"] = Tool,
+			["Settings"] = Settings,
+			["Caliber"] = Caliber,
+			["Module"] = Module
+		}
+
+		Caster.BulletCreate:Connect(function(Cast, Bullet)			
+			if Bullet then
+				SE_API:ActivateTracer(Bullet, Cast.Caster.CasterData.Caliber.Settings, math.random(1, 10) <= Cast.Caster.CasterData.Caliber.Settings.Tracer)
+			end
+		end)
+
+		Caster.RayHit:Connect(function(Cast, Raycast, Velocity, Bullet)
+			SE_API:ActivateTracer(Bullet, Cast.Caster.CasterData.Caliber.Settings, math.random(1, 10) <= Cast.Caster.CasterData.Caliber.Settings.Tracer)
+		end)
+
+		Caster.RayPierced:Connect(function(Cast, Raycast, Velocity, Bullet, Direction)
+			if Cast.UserData.LastHit then
+				Cast:SetVelocity(Cast.UserData.LastHit.NewVelocity)
+				Cast:SetPosition(Cast.UserData.LastHit.NewPosition)
+
+				if Cast.UserData.LastHit.HitEffects then
+					Cast:SetVelocity(Cast.UserData.LastHit.NewVelocity)
+					Cast:SetPosition(Cast.UserData.LastHit.NewPosition)
+				end
+			end
+
+			SE_API:ActivateTracer(Bullet, Cast.Caster.CasterData.Caliber.Settings, math.random(1, 10) <= Cast.Caster.CasterData.Caliber.Settings.Tracer)
+
+			Cast.UserData.LastHit = nil
+		end)
+
+		Caster.LengthChanged:Connect(function(Cast, Origin, Direction, Length, Velocity, Bullet)
+			if not Bullet then return end
+
+			Bullet.CFrame = CFrame.new(Origin, Origin + Direction) * CFrame.new(0, 0, -(Length - Bullet.Size.Z / 2))
+		end)
+
+		Caster.CastTerminating:Connect(function(Cast)
+			local Bullet = Cast.RayInfo.CosmeticBulletObject
+
+			if not Bullet then return end
+
+			SE_API:ActivateTracer(Bullet, Cast.Caster.CasterData.Caliber.Settings, math.random(1, 10) <= Cast.Caster.CasterData.Caliber.Settings.Tracer)
+			Module.CosmeticBulletProvider:ReturnPart(Bullet)
+		end)
+
+		CasterCache[Weapon] = Caster
+	end
+end
+
+function Module:FireCaster(Player, MuzzleCFrame, Direction, Weapon, ExcludeList)
+	local Caster = CasterCache[Weapon]
+	local Module = ModuleCache[Weapon]
+
+	if (not Module) or (not Caster) then return end
+
+	local Velocity = Caster.CasterData.Settings.MuzzleVelocity
+
+	Caster:Fire(MuzzleCFrame, Direction, Velocity, Module,{
+		["MuzzleVelocity"] = Velocity,
+		["MuzzleOrigin"] = MuzzleCFrame,
+		["MuzzleDirection"] = Direction,
+		["WhizzedPlayers"] = {}
+	})
+end
+
+return Module
