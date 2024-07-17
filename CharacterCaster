@@ -1,0 +1,423 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.SE_Engine.Configurations.Config)
+local FastCast = require(ReplicatedStorage.SE_Engine.Modules.FastCast)
+local Red = require(ReplicatedStorage.SE_Engine.Modules.Red)
+local Hitmarker = require(ReplicatedStorage.SE_Engine.Modules.Hitmarker)
+local SE_API = require(ReplicatedStorage.SE_Engine.Modules.SE_API)
+
+local CharacterNetwork = Red.Client("CharacterNetwork")
+local WeaponNetwork = Red.Client("WeaponNetwork")
+local ClientGUID
+
+local CharacterCaster = {}
+local ModuleCache = {}
+local CasterCache = {}
+local Hits = {
+	["Head"] = {
+		"Head"
+	},
+
+	["Chest"] = {
+		"Torso", "UpperTorso", "LowerTorso","HumanoidRootPart"
+	},
+
+	["Limb"] = {
+		"LeftUpperArm", "LeftLowerArm","LeftHand", "RightUpperArm", "RightLowerArm", "RightHand", "LeftUpperLeg", "LeftLowerLeg", "LeftFoot", "RightUpperLeg", "RightLowerLeg", "RightFoot"
+	},
+}
+
+function CharacterCaster:DetectHumanoid(Model)
+	if not Model then
+		return
+	end
+
+	local Humanoid = Model:FindFirstChildOfClass("Humanoid")
+	local Type
+
+	if not Humanoid then
+		local PreModel = Model:FindFirstAncestorOfClass("Model")
+
+		if not PreModel then
+			return
+		end
+
+		Humanoid = PreModel:FindFirstChildOfClass("Humanoid")
+	end
+
+	for i, v in next, Hits do
+		if table.find(v, Model.Name) then 
+			Type = i 
+
+			break 
+		end
+	end
+
+	if Model.Parent:IsA("Accessory") and Model.CanQuery then
+		Model.CanQuery = false
+	end
+
+
+
+	if not Type then --debug
+		Type = "Limb"
+	end
+
+	return Humanoid, Type
+end
+
+function CharacterCaster:CalculateArmour(ArmourHP, ArmourProtection, Penetration, MultipliedDamage)
+	local ArmorDamage = 0
+	local Damage = 0
+	local PenetrationPercentage = 100 - Penetration
+
+	if ArmourHP > 0 and Penetration < ArmourProtection  then
+		Damage = MultipliedDamage * Penetration / ArmourProtection
+		ArmorDamage = MultipliedDamage * PenetrationPercentage / ArmourProtection
+
+		if ArmorDamage <= 0 then
+			ArmorDamage = 0.5
+		end
+	elseif ArmourHP > 0 and Penetration >= ArmourProtection then
+		Damage = MultipliedDamage
+		ArmorDamage = MultipliedDamage * PenetrationPercentage / ArmourProtection
+
+		if ArmorDamage <= 0 then
+			ArmorDamage = 1
+		end				
+	elseif ArmourHP <= 0 then
+		Damage = MultipliedDamage
+	end
+
+	return Damage, ArmorDamage
+end
+
+function CharacterCaster:CalculateDamage(HitType, Humanoid, Multiplier, Distance, Caliber)
+	local Damage = 0
+	local VestDamage = 0
+	local HelmetDamage = 0
+
+	local MultipliedDamage = Multiplier - (math.ceil(Distance) / 40) * Caliber.Damage.DamageFallOff
+	local SE_Character = Humanoid.Parent:FindFirstChild("SE_Character")
+
+	if SE_Character then
+		if HitType == "Head"then
+			Damage, HelmetDamage = CharacterCaster:CalculateArmour(SE_Character:GetAttribute("HelmetHP"), SE_Character:GetAttribute("HelmetArmour"), Caliber.Damage.ArmorPenetration, MultipliedDamage)
+
+		elseif HitType == "Chest" then
+			Damage, VestDamage = CharacterCaster:CalculateArmour(SE_Character:GetAttribute("VestHP"), SE_Character:GetAttribute("VestArmour"), Caliber.Damage.ArmorPenetration, MultipliedDamage)
+
+		else
+
+			Damage = MultipliedDamage
+		end
+	else
+		Damage = MultipliedDamage
+	end
+
+	Damage = math.max(0, Damage)
+
+	return Damage, VestDamage, HelmetDamage
+end
+
+
+
+function CharacterCaster:RegisterDamage(Hit, Caliber, Multiplier, Distance)
+	local Humanoid, Type = CharacterCaster:DetectHumanoid(Hit)
+	if not Humanoid or not (Humanoid.Health > 0) then return end
+
+	local HitType : string = "Chest"
+	if type(Hit) ~= type("string") then
+		Hit = Hit.Name
+	end
+
+	for HitCat : string, HitList : {[number] : string} in pairs(Hits) do
+		if table.find(HitList, Hit) then HitType = HitCat break end
+	end
+	local Pass = string.format("%s-%s", ClientGUID, Players.LocalPlayer.UserId)
+	Multiplier = math.random(Caliber.Damage[Type][1], Caliber.Damage[Type][2]) * Multiplier
+
+	local BodyDamage, VestDamage, HelmetDamage = CharacterCaster:CalculateDamage(Type, Humanoid, Multiplier, Distance, Caliber)
+	WeaponNetwork:Fire("Damage", HitType, Humanoid, BodyDamage, HelmetDamage, VestDamage, Pass)
+	Players.LocalPlayer.PlayerGui.StatusUI.Crosshair.Down.BackgroundTransparency = 0
+	Players.LocalPlayer.PlayerGui.StatusUI.Crosshair.Left.BackgroundTransparency = 0
+	Players.LocalPlayer.PlayerGui.StatusUI.Crosshair.Right.BackgroundTransparency = 0
+	Players.LocalPlayer.PlayerGui.StatusUI.Crosshair.Up.BackgroundTransparency = 0
+	task.delay(1, function()
+		print("ugh")
+		Players.LocalPlayer.PlayerGui.StatusUI.Crosshair.Down.BackgroundTransparency = 1
+		Players.LocalPlayer.PlayerGui.StatusUI.Crosshair.Left.BackgroundTransparency = 1
+		Players.LocalPlayer.PlayerGui.StatusUI.Crosshair.Right.BackgroundTransparency = 1
+		Players.LocalPlayer.PlayerGui.StatusUI.Crosshair.Up.BackgroundTransparency = 1
+	end)
+	return true
+end
+
+
+function CharacterCaster:SetupCaster(Tool, Model, Settings, Caliber, ExcludeList)
+	local Weapon = Tool.Name
+	local Module = ModuleCache[Weapon]
+	local Caster = CasterCache[Weapon]
+
+	if not ClientGUID then
+		CharacterNetwork:Call("Identification", Players.LocalPlayer.UserId):Then(function(GUID)
+			ClientGUID = GUID
+		end)
+	end
+
+	if Module then
+		Module.RaycastParams.FilterDescendantsInstances = ExcludeList
+	else
+		local FastCastParams = RaycastParams.new()
+		FastCastParams.IgnoreWater = true
+		FastCastParams.FilterType = Enum.RaycastFilterType.Exclude
+		FastCastParams.FilterDescendantsInstances = ExcludeList
+
+		Module = FastCast.newBehavior()
+		Module.RaycastParams = FastCastParams
+		Module.MaxDistance = Caliber.Settings.Distance or 3000
+		Module.HighFidelityBehavior = FastCast.HighFidelityBehavior.Default
+		Module.Acceleration = Vector3.new(workspace.GlobalWind.X, workspace.GlobalWind.Y - 0.367 * workspace.Gravity - Caliber.Settings.Drop * workspace.Gravity, workspace.GlobalWind.Z)
+
+		Module.CosmeticBulletProvider = shared.StrikeEngine.ProjectileCaches[Caliber.Designation]
+		Module.CosmeticBulletContainer = workspace.SE_Workspace.Client.Projectiles
+		Module.CanPierceFunction = function(Cast, Raycast, Velocity, Bullet, Direction)
+			if not Cast.UserData.Caliber then
+				Cast.UserData.Caliber = Cast.Caster.CasterData.Caliber.Settings.Penetration
+			end
+
+			if CharacterCaster:RegisterDamage(Raycast.Instance, Caliber.Settings, 1, 1) then --Hit a character!
+				if Caliber.Settings.Explosive then
+					WeaponNetwork:Fire("Explosive", Raycast.Position, Caliber)
+					WeaponNetwork:Fire("Hitmark", ExcludeList, Raycast.Position, Raycast.Instance, Raycast.Normal, Raycast.Material, Cast.Caster.CasterData.Caliber.Settings)
+					Hitmarker.HitEffect(ExcludeList, Raycast.Position, Raycast.Instance, Raycast.Normal, Raycast.Material, Cast.Caster.CasterData.Caliber.Settings)
+
+
+				else
+					Hitmarker.HitEffect(ExcludeList, Raycast.Position, Raycast.Instance, Raycast.Normal, Raycast.Material, Cast.Caster.CasterData.Caliber.Settings)
+					WeaponNetwork:Fire("Hitmark", ExcludeList, Raycast.Position, Raycast.Instance, Raycast.Normal, Raycast.Material, Cast.Caster.CasterData.Caliber.Settings)
+
+					if Cast.UserData.Caliber - Config.MaterialHealths["Body"] > 0 then
+						Cast.UserData.Caliber -= Config.MaterialHealths["Body"]
+
+						return true
+					end
+				end			
+
+				return false
+			end
+
+			local WallbangParams = RaycastParams.new()
+			WallbangParams.FilterDescendantsInstances = {Raycast.Instance}
+			WallbangParams.FilterType = Enum.RaycastFilterType.Include
+
+			local WallbangHardness = Config.WallbangHardnesses[Raycast.Material] or Config.WallbangHardnesses["Default"]
+
+			local BulletMass = Bullet:GetMass()
+			local BulletPenetration = BulletMass * Velocity.Magnitude
+			local CastDist
+
+			if Config.WallbangExceptions[Raycast.Instance.Name] then
+				CastDist = BulletPenetration / Config.WallbangExceptions[Raycast.Instance.Name]
+			else
+				CastDist = BulletPenetration / WallbangHardness
+			end
+
+			local CastDist2 = CastDist * (Velocity.Magnitude / Cast.UserData["MuzzleVelocity"])
+			local WallbangRaycast = workspace:Raycast(Raycast.Position + Direction * CastDist2, -Direction * CastDist2, WallbangParams)
+
+			if WallbangRaycast and CastDist >= (WallbangRaycast.Position - Raycast.Position).Magnitude then			
+				Cast.Caster.CasterData["Wallbang"] = true
+				Cast.UserData["LastHit"] = {
+					["NewVelocity"] = Velocity * 0.65,
+					["NewPosition"] = WallbangRaycast.Position,
+					["HitEffects"] = {
+						[1] = Raycast,
+						[2] = WallbangRaycast
+					}
+				}
+
+				return true
+			end
+
+			if (Config.RicochetAngles[Raycast.Material] or Config.RicochetAngles["Default"]) >= math.deg(math.acos(Direction.Unit:Dot(Raycast.Normal.Unit))) - 90 then
+				Cast.Caster.CasterData["Ricochet"] = true
+				Cast.UserData["LastHit"] = {
+					["NewVelocity"] = Velocity.Unit - (2 * Velocity.Unit:Dot(Raycast.Normal) * Raycast.Normal) * (Velocity.Magnitude * 0.9),
+					["NewPosition"] = Raycast.Position,
+					["HitEffects"] = {
+						[1] = Raycast
+					}
+				}
+
+				return true
+			end
+
+			if Config.MaterialHealths[Raycast.Material] and Cast.UserData.Caliber - Config.MaterialHealths[Raycast.Material] > 0 then
+				Cast.UserData.Caliber -= Config.MaterialHealths[Raycast.Material]
+
+				if Caliber.Settings.Explosive then
+					WeaponNetwork:Fire("Explosive", Raycast.Position, Caliber)
+					WeaponNetwork:Fire("Hitmark", ExcludeList, Raycast.Position, Raycast.Instance, Raycast.Normal, Raycast.Material, Cast.Caster.CasterData.Caliber.Settings)
+					Hitmarker.HitEffect(ExcludeList, Raycast.Position, Raycast.Instance, Raycast.Normal, Raycast.Material, Cast.Caster.CasterData.Caliber.Settings)
+
+				else
+					Hitmarker.HitEffect(ExcludeList, Raycast.Position, Raycast.Instance, Raycast.Normal, Raycast.Material, Cast.Caster.CasterData.Caliber.Settings)
+					WeaponNetwork:Fire("Hitmark", ExcludeList, Raycast.Position, Raycast.Instance, Raycast.Normal, Raycast.Material, Cast.Caster.CasterData.Caliber.Settings)
+
+					return true
+				end
+			elseif Caliber.Settings.Explosive then
+				Hitmarker.HitEffect(ExcludeList, Raycast.Position, Raycast.Instance, Raycast.Normal, Raycast.Material, Cast.Caster.CasterData.Caliber.Settings)
+
+				WeaponNetwork:Fire("Explosive", Raycast.Position, Caliber)
+				WeaponNetwork:Fire("Hitmark", ExcludeList, Raycast.Position, Raycast.Instance, Raycast.Normal, Raycast.Material, Cast.Caster.CasterData.Caliber.Settings)
+
+			end
+
+			return false
+		end
+
+		ModuleCache[Weapon] = Module
+	end
+
+	if Caster then
+		Caster.CasterData["Model"] = Model
+	else
+		local Caster = FastCast.new()
+		Caster.CasterData = {
+			["Tool"] = Tool,
+			["Model"] = Model,
+			["Settings"] = Settings,
+			["Caliber"] = Caliber,
+			["Module"] = Module
+		}
+
+		Caster.BulletCreate:Connect(function(Cast, Bullet)			
+			if Bullet then
+				SE_API:ActivateTracer(Bullet, Cast.Caster.CasterData.Caliber.Settings, math.random(1, 10) <= Cast.Caster.CasterData.Caliber.Settings.Tracer)
+			end
+		end)
+
+		Caster.RayHit:Connect(function(Cast, Raycast, Velocity, Bullet)
+			SE_API:ActivateTracer(Bullet, Cast.Caster.CasterData.Caliber.Settings, math.random(1, 10) <= Cast.Caster.CasterData.Caliber.Settings.Tracer)
+
+			if Caliber.Settings.Explosive then
+				WeaponNetwork:Fire("Explosive", Raycast.Position, Caliber)
+				WeaponNetwork:Fire("Hitmark", ExcludeList, Raycast.Position, Raycast.Instance, Raycast.Normal, Raycast.Material, Cast.Caster.CasterData.Caliber.Settings)
+				Hitmarker.HitEffect(ExcludeList, Raycast.Position, Raycast.Instance, Raycast.Normal, Raycast.Material, Cast.Caster.CasterData.Caliber.Settings)
+
+			else
+				Hitmarker.HitEffect(ExcludeList, Raycast.Position, Raycast.Instance, Raycast.Normal, Raycast.Material, Cast.Caster.CasterData.Caliber.Settings)
+				WeaponNetwork:Fire("Hitmark", ExcludeList, Raycast.Position, Raycast.Instance, Raycast.Normal, Raycast.Material, Cast.Caster.CasterData.Caliber.Settings)
+			end
+		end)
+
+		Caster.RayPierced:Connect(function(Cast, Raycast, Velocity, Bullet, Direction)
+			if Cast.UserData.LastHit then
+				Cast:SetVelocity(Cast.UserData.LastHit.NewVelocity)
+				Cast:SetPosition(Cast.UserData.LastHit.NewPosition)
+
+				if Cast.UserData.LastHit.HitEffects then
+					Cast:SetVelocity(Cast.UserData.LastHit.NewVelocity)
+					Cast:SetPosition(Cast.UserData.LastHit.NewPosition)
+
+					for i, v in next, Cast.UserData.LastHit.HitEffects do
+						if Caliber.Settings.Explosive then
+							WeaponNetwork:Fire("Explosive", Raycast.Position, Caliber)
+						end
+
+						Hitmarker.HitEffect(ExcludeList, Raycast.Position, Raycast.Instance, Raycast.Normal, Raycast.Material, Cast.Caster.CasterData.Caliber.Settings)
+						WeaponNetwork:Fire("Hitmark", ExcludeList, Raycast.Position, Raycast.Instance, Raycast.Normal, Raycast.Material, Cast.Caster.CasterData.Caliber.Settings)
+					end
+				end
+			end
+
+			SE_API:ActivateTracer(Bullet, Cast.Caster.CasterData.Caliber.Settings, math.random(1, 10) <= Cast.Caster.CasterData.Caliber.Settings.Tracer)
+
+			Cast.UserData.LastHit = nil
+		end)
+
+		Caster.LengthChanged:Connect(function(Cast, Origin, Direction, Length, Velocity, Bullet)
+			if not Bullet then return end
+			if not Caster.CasterData.Model:FindFirstChild("Handle") then return end
+
+			Bullet.CFrame = CFrame.new(Origin, Origin + Direction) * CFrame.new(0, 0, -(Length - Bullet.Size.Z / 2))
+
+			if Cast.Caster.CasterData.Settings.Whizz then
+				local PrePosition = Caster.CasterData.Model.Handle.Muzzle.Position
+				local ProPosition = Bullet.Position
+				local BulletVector = ProPosition - PrePosition
+
+				local BulletVectorUnit = BulletVector.Unit
+				local BulletSpeed = Velocity.Magnitude
+				local BulletType = Settings.Caliber
+				local SPPosition = Caster.CasterData.Model.Handle.Muzzle.Position
+				local SPVector = Caster.CasterData.Model.Handle.Muzzle.CFrame.LookVector
+
+				if not Cast.UserData.Whizzed then
+					Cast.UserData.Whizzed = {}
+				end
+
+				for i, v in next, Players:GetPlayers() do
+					if v.Character and (v ~= Players.LocalPlayer or Config.Debug) and not Cast.UserData.Whizzed[v.Name] then
+						local Head = v.Character:FindFirstChild("Head")
+
+						if Head then
+							local HeadPos = v.Character.Head.Position
+							local Angle = (HeadPos - ProPosition).Unit:Dot(BulletVectorUnit)
+							local Angle2 = (HeadPos - SPPosition).Unit:Dot(SPVector)
+
+							if Angle < 0 and Angle2 > 0 then 
+								local Distance = Ray.new(PrePosition, BulletVectorUnit):Distance(HeadPos)
+
+								if Distance <= Cast.Caster.CasterData.Settings.SuppressMaxDistance then
+									WeaponNetwork:Fire("Suppress", v, Cast.Caster.CasterData.Settings.SuppressIntensity, Cast.Caster.CasterData.Settings.SuppressTime)
+								end
+
+								if Distance <= Cast.Caster.CasterData.Settings.BWMaxDistance then
+									local HeadDist = (SPPosition - HeadPos).Magnitude
+									local CrackFactor = math.min(HeadDist / 64 * Angle2, 1) 
+									WeaponNetwork:Fire("Whizz", v, BulletType, BulletSpeed, Cast.Caster.CasterData.Settings.BWEmitter * CrackFactor, Distance, Cast.Caster.CasterData.Settings.BWMaxDistance)
+								end
+
+								Cast.UserData.Whizzed[v.Name] = true
+							end
+						end
+					end
+				end
+			end
+		end)
+
+		Caster.CastTerminating:Connect(function(Cast)
+			local Bullet = Cast.RayInfo.CosmeticBulletObject
+
+			if not Bullet then return end
+
+			SE_API:ActivateTracer(Bullet, Cast.Caster.CasterData.Caliber.Settings, math.random(1, 10) <= Cast.Caster.CasterData.Caliber.Settings.Tracer)
+			Module.CosmeticBulletProvider:ReturnPart(Bullet)
+		end)
+
+		CasterCache[Weapon] = Caster
+	end
+end
+
+function CharacterCaster:FireCaster(Player, MuzzleCFrame, Direction, Weapon, Tool, ExcludeList)
+	local Caster = CasterCache[Weapon]
+	local Module = ModuleCache[Weapon]
+
+	local Velocity = Caster.CasterData.Settings.MuzzleVelocity
+
+	if (not ModuleCache[Weapon]) or (not CasterCache[Weapon]) then return end
+
+	WeaponNetwork:Fire("Replicate", Tool, Caster.CasterData.Settings, Caster.CasterData.Caliber, ExcludeList, MuzzleCFrame, Direction)
+	Caster:Fire(MuzzleCFrame, Direction, Velocity, Module,{
+		["MuzzleVelocity"] = Velocity,
+		["MuzzleOrigin"] = MuzzleCFrame,
+		["MuzzleDirection"] = Direction,
+		["WhizzedPlayers"] = {}
+	})
+end
+
+return CharacterCaster
